@@ -224,6 +224,7 @@ def grant_logging_permissions_bucket_policy(logging_bucket_name: str,
         Policy = policy
     )
     s3_policy_resource.reload() #same as .load()
+    print(f"Update Policy:\n{s3_policy_resource.policy}")
     return response
 
 
