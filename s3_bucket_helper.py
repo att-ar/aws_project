@@ -52,7 +52,7 @@ def gen_bucket(bucket_name: str, s3_boto_connection, suffix = True):
 def helper_date_comparison(bucket_creationdate: datetime.datetime, *args) -> bool:
     '''helper for get_buckets_with_name_date, returns the date comparison result'''
     timezone = bucket_creationdate.tzinfo
-    args = list(args)
+    args = list(args) #args is a tuple but a mutable object is needed
     for i in range(len(args)):
         if not args[i].tzinfo:
             args[i] = args[i].replace(tzinfo = timezone)
