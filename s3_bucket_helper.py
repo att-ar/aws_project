@@ -1,5 +1,6 @@
 #function to add random suffix to bucket names
 import boto3
+from botocore.exceptions import ClientError
 import datetime
 import json
 from uuid import uuid4
@@ -19,34 +20,58 @@ def gen_bucket_name(bucket_name: str) -> str:
             [bucket_name, hyphen[bucket_name[-1] == "-"], str(uuid4())]
         )[:min((len(bucket_name) + 36), 63)]
 
-def gen_bucket(bucket_name: str, s3_boto_connection, suffix = True):
+def gen_tagging_list_from_python_dict(tags:dict):
+    '''Converts a dict of key-value pairs to a list of s3 tagging dicts'''
+    return [{'Key': key, 'Value': val} for key,val in tags.items()]
+
+def gen_bucket(bucket_name: str, tags: dict = None, region = None, suffix = True):
     '''
     Creates an S3 bucket and returns the suffixed bucket name as well as the S3 response
 
     Precondition:
-        `s3_boto_connection` is of type botocore.client.S3 or boto3.resources.factory.s3.ServiceResource
         `bucket_name` must contain characters valid in S3
+        Each tag in `tags` must be in s3 tag format: {'Key':key_argument, 'Value':value_argument}
 
     This function uses the user that connected through the boto SDK to find its default region.
 
     Parameters:
-    `suffix` whether to assign a random suffix to `bucket_name` using gen_bucket_name()
+    `tags` list[dict[str]]
+        List of dictionaries containing the key-value pairs to be assigned as tags to the bucket.
+        Each tag must be formatted in the s3 tag format: {'Key':key_argument, 'Value': value_argument}.
+        Example for two tags:
+            [{'Key': 'creator', 'Value': "john_doe"},
+             {'Key': 'content', 'Value': 'simulated_data'}]
+    `region` str
+        The region that the bucket should be deployed in, defaults to the user's default region.
+        Valid regions: af-south-1, ap-east-1, ap-northeast-1, ap-northeast-2, ap-northeast-3, ap-south-1,
+        ap-south-2, ap-southeast-1, ap-southeast-2, ap-southeast-3, ca-central-1, cn-north-1,
+        cn-northwest-1, EU, eu-central-1, eu-north-1, eu-south-1, eu-south-2, eu-west-1, eu-west-2,
+        eu-west-3, me-south-1, sa-east-1, us-east-2, us-gov-east-1, us-gov-west-1, us-west-1, us-west-2
+    `suffix` str
+        whether to assign a random suffix to `bucket_name` using gen_bucket_name()
         if suffix == True:
             The `gen_bucket_name` function is used to generate a suffixed version of the input name.
         if suffix == False:
             The `bucket_name` argument is used as the S3 bucket name
             (this may throw an error since buckets need to be globally unique).
     '''
-    user_region = boto3.Session().region_name
+    s3_boto_connection = boto3.resource("s3")
+    if not region:
+        region = boto3.Session().region_name
     if suffix: bucket_name = gen_bucket_name(bucket_name)
     bucket_response = s3_boto_connection.create_bucket(
         Bucket = bucket_name,
         CreateBucketConfiguration={
-            "LocationConstraint": user_region
+            "LocationConstraint": region
         }
     )
-    print(f"Bucket: {bucket_name}\tRegion: {user_region}")
-    return bucket_name, bucket_response
+    if isinstance(tags, list):
+        bucket_tagger = s3_boto_connection.BucketTagging(bucket_name)
+        set_tag = bucket_tagger.put(Tagging={"TagSet":tags})
+        bucket_tagger.reload()
+    print(f"Bucket: {bucket_name}\tRegion: {region}")
+    print(f"Bucket tags: {bucket_tagger.tag_set}")
+    return bucket_name, bucket_response, set_tag
 
 # getting things based on filters -------------------------
 def helper_date_comparison(bucket_creationdate: datetime.datetime, *args) -> bool:
@@ -65,6 +90,7 @@ def helper_date_comparison(bucket_creationdate: datetime.datetime, *args) -> boo
         else:
             return bucket_creationdate.date() == args[0].date()
             #will use the date portion for single comparison
+
 def get_buckets_with_name_date(prefix: str,
     use_date: list[str|datetime.datetime|datetime.date]
                 | str|datetime.datetime|datetime.date
