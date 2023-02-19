@@ -2,5 +2,6 @@
 ---
 Data Source: either simulated via an app or from real battery test bench (hopefully both to show multi-integration and use of IAM Roles and Users).
 
-- Will likely store things in S3, potentially RDS.
-- Will use parquet files
+- Will store data in S3 buckets, potentially RDS as well.
+- Will use parquet files since they are more efficient and smaller.
+- Will need to implement Athena and SageMaker in the later stages.
