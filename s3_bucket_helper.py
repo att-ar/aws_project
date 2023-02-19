@@ -5,13 +5,31 @@ import datetime
 import json
 from uuid import uuid4
 
+def display_functions(name):
+    '''Displays the functions defined in the module `name`'''
+    functions = []
+    for name in dir(name):
+        obj = eval(name)
+        if hasattr(obj, '__call__'):
+            if obj.__module__ == __name__:
+                functions.append(name)
+    return functions
+
 # generating things --------------------------
+def gen_tagging_list_from_python_dict(tags:dict):
+    '''Converts a dict of key-value pairs to a list of s3 tagging dicts'''
+    return [{'Key': key, 'Value': val} for key,val in tags.items()]
+
+def gen_python_dict_from_tagging_list(tags:list[dict]):
+    '''Converts list of s3 tagging dicts to dict of key-value pairs'''
+    return dict([(tag["Key"],tag["Value"]) for tag in tags])
+
 def gen_bucket_name(bucket_name: str) -> str:
     '''
-    Precondition: `bucket_name` contains S3 valid characters
-    str -> str
+    Returns a `len(bucket_name) + 36` character long string that is likely a unique bucket name
 
-    This function returns a `len(bucket_name) + 36` character long string that is likely a unique bucket name
+    Precondition: `bucket_name` contains S3 valid characters
+
     Parameters:
     `bucket_name` is the user given bucket name that the random suffix will be added to
     '''
@@ -19,10 +37,6 @@ def gen_bucket_name(bucket_name: str) -> str:
     return "".join(
             [bucket_name, hyphen[bucket_name[-1] == "-"], str(uuid4())]
         )[:min((len(bucket_name) + 36), 63)]
-
-def gen_tagging_list_from_python_dict(tags:dict):
-    '''Converts a dict of key-value pairs to a list of s3 tagging dicts'''
-    return [{'Key': key, 'Value': val} for key,val in tags.items()]
 
 def gen_bucket(bucket_name: str, tags: dict = None, region = None, suffix = True):
     '''
@@ -38,9 +52,10 @@ def gen_bucket(bucket_name: str, tags: dict = None, region = None, suffix = True
     `tags` list[dict[str]]
         List of dictionaries containing the key-value pairs to be assigned as tags to the bucket.
         Each tag must be formatted in the s3 tag format: {'Key':key_argument, 'Value': value_argument}.
+        Use the gen_tagging_list_from_python_dict() with a regular python dictionary to format your input
         Example for two tags:
-            [{'Key': 'creator', 'Value': "john_doe"},
-             {'Key': 'content', 'Value': 'simulated_data'}]
+            [{'Key': 'creator', 'Value': "john-doe"},
+             {'Key': 'content', 'Value': 'simulated-data'}]
     `region` str
         The region that the bucket should be deployed in, defaults to the user's default region.
         Valid regions: af-south-1, ap-east-1, ap-northeast-1, ap-northeast-2, ap-northeast-3, ap-south-1,
@@ -65,15 +80,92 @@ def gen_bucket(bucket_name: str, tags: dict = None, region = None, suffix = True
             "LocationConstraint": region
         }
     )
+    print(f"Bucket: {bucket_name}\tRegion: {region}")
+
     if isinstance(tags, list):
         bucket_tagger = s3_boto_connection.BucketTagging(bucket_name)
         set_tag = bucket_tagger.put(Tagging={"TagSet":tags})
         bucket_tagger.reload()
-    print(f"Bucket: {bucket_name}\tRegion: {region}")
-    print(f"Bucket tags: {bucket_tagger.tag_set}")
+        print(f"Bucket tags: {bucket_tagger.tag_set}")
+
     return bucket_name, bucket_response, set_tag
 
 # getting things based on filters -------------------------
+## at some point these will likely be changed to use metadata stored by AWS either in S3 or RDS
+## accessing it in that way will incur charges though because it is retrieval of data stored in AWS.
+
+## tag filter
+def helper_tag_filter(tag_list:dict, source_tags:dict):
+    '''helper for get_buckets_tag_filter() and get_object_tag_filter()'''
+    result = len(tag_list)
+    for tkey, tval in tag_list.items():
+        if not result: return True
+        if source_tags.get(tkey) == tval:
+            result -= 1
+    return not result
+
+def get_buckets_with_tags(tags: list[dict]|dict, s3_format = True) -> list[tuple[str]]:
+    '''
+    Returns list of tuples containing buckets and their tags based on filtering by `tags`
+
+    Parameters:
+    `tags` list[dict]|dict
+        See `s3_format` for more information
+    `s3_format` bool
+        if True, `tags` is a list S3 tag formatted dicts {"Key":key_arg, "Value":value_arg}
+        if False, `tags` is a dict of regular key-value pairs {key_arg1: value_arg1, key_arg2: value_arg2}
+    '''
+    assert isinstance(tags,(list,dict))
+    if s3_format:
+        tags = gen_python_dict_from_tagging_list(tags)
+    s3_client = boto3.client("s3")
+    result = []
+    for bucket in s3_client.list_buckets()["Buckets"]:
+        try:
+            bucket_tags = s3_client.get_bucket_tagging(Bucket=bucket["Name"])["TagSet"]
+            if helper_tag_filter(tags, gen_python_dict_from_tagging_list(bucket_tags)):
+                result.append((bucket, bucket_tags))
+        except ClientError as err:
+            if err.response["Error"]["Code"] == "NoSuchTagSet": continue
+            else: print("Error: ", err.response)
+    return result
+
+def get_objects_with_tags_from_bucket(bucket_name:str, tags:list[dict]|dict,
+                                      object_prefix:str = None, s3_format = True) -> list[tuple[str]]:
+    '''
+    Returns list of tuples containing `bucket_name`'s objects and their tags based on `tags` 
+
+    Parameters:
+    `bucket_name` str
+        the name of the bucket to check
+    `tags` list[dict]|dict
+        See `s3_format` for more information
+    `object_prefix` str
+        Prefix of objects that should be returned, makes the request from AWS smaller I think, accelerates the function.
+        defaults to None, all objects in the bucket are checked for the tags
+    `s3_format` bool
+        if True, `tags` is a list S3 tag formatted dicts {"Key":key_arg, "Value":value_arg}
+        if False, `tags` is a dict of regular key-value pairs {key_arg1: value_arg1, key_arg2: value_arg2}
+    '''
+    s3_client = boto3.client("s3")
+    result = []
+    if s3_format:
+        tags = gen_python_dict_from_tagging_list(tags)
+    if object_prefix: #!= None
+        assert isinstance(object_prefix,str)
+        object_list =  s3_client.list_objects(Bucket = bucket_name, Prefix = object_prefix)["Contents"]
+    else:
+        object_list = s3_client.list_objects(Bucket = bucket_name)["Contents"]
+    for object in object_list:
+        tag_dict = gen_python_dict_from_tagging_list(
+            s3_client.get_object_tagging(Bucket = bucket_name, Key = object["Key"])["TagSet"]
+        )
+        if helper_tag_filter(tags,tag_dict):
+            result.append((object,tag_dict))
+    return result
+
+
+## name date filter
 def helper_date_comparison(bucket_creationdate: datetime.datetime, *args) -> bool:
     '''helper for get_buckets_with_name_date, returns the date comparison result'''
     timezone = bucket_creationdate.tzinfo
@@ -92,9 +184,9 @@ def helper_date_comparison(bucket_creationdate: datetime.datetime, *args) -> boo
             #will use the date portion for single comparison
 
 def get_buckets_with_name_date(prefix: str,
-    use_date: list[str|datetime.datetime|datetime.date]
-                | str|datetime.datetime|datetime.date
-                | None = None) -> list[str]:
+                use_date: list[str|datetime.datetime|datetime.date]
+                    | str|datetime.datetime|datetime.date
+                    | None = None) -> list[str]:
     '''
     Returns list of bucket names who start with `prefix` and made on or in (list) `use_date` using boto3.
 
@@ -140,10 +232,10 @@ def get_buckets_with_name_date(prefix: str,
         if (bucket["Name"][: min(len(bucket["Name"]), len(prefix))] == prefix)
             & (helper_date_comparison(bucket["CreationDate"], *use_date))]
 
-#deleting objects from a bucket based on a prefix(es) filter: ------------
+#deleting objects from a bucket based on a prefix(es) filter: --------------
 # can use this to delete all objects if you pass "" as the prefix
 
-def delete_objects_in_bucket(bucket_name: str, prefixes: str|list[str]):
+def delete_objects__with_prefix(bucket_name: str, prefixes: str|list[str]):
     '''
     Delete objects from a bucket using `prefixes` as the filter for object names
 
@@ -253,11 +345,9 @@ def grant_logging_permissions_bucket_policy(logging_bucket_name: str,
     print(f"Update Policy:\n{s3_policy_resource.policy}")
     return response
 
-
-
 def set_bucket_server_access_logging_on(source_bucket_name: str,
-                                     logging_bucket_name: str,
-                                     logging_path_prefix: str|None = None):
+                                        logging_bucket_name: str,
+                                        logging_path_prefix: str|None = None):
     '''
     Activates logging of `source_bucket_name` in `logging_bucket_name` at path = `logging_path_prefix/`
 
