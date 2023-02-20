@@ -85,14 +85,13 @@ def gen_bucket(bucket_name: str, tags: dict = None, region = None, suffix = True
     if isinstance(tags, list):
         bucket_tagger = s3_boto_connection.BucketTagging(bucket_name)
         set_tag = bucket_tagger.put(Tagging={"TagSet":tags})
-        bucket_tagger.reload()
-        print(f"Bucket tags: {bucket_tagger.tag_set}")
+        # bucket_tagger.reload() #useless here since it isn't called again
+        print(f"Bucket tags: {tags}")
 
     return bucket_name, bucket_response, set_tag
 
 # getting things based on filters -------------------------
-## at some point these will likely be changed to use metadata stored by AWS either in S3 or RDS
-## accessing it in that way will incur charges though because it is retrieval of data stored in AWS.
+# at some point these will likely be changed to use metadata stored by AWS either in S3 or RDS
 
 ## tag filter
 def helper_tag_filter(tag_list:dict, source_tags:dict):
@@ -277,6 +276,84 @@ def delete_objects__with_prefix(bucket_name: str, prefixes: str|list[str]):
 
 
 #setting/granting things like bucket server access logging ---------------
+def add_tags_to_bucket(bucket_name:str, tags:list[dict]|dict, s3_format=True):
+    '''
+    Adds tags to an s3 bucket. Does not remove existing tags.
+
+    Will add an option to overwrite duplicate tags at some point.
+
+    Parameters:
+    `bucket_name` str
+        the name of the s3 bucket
+    `tags` list[dict]|dict
+        the tags to be added
+        See `s3_format` for more information
+    `s3_format` bool
+        if True, `tags` is a list S3 tag formatted dicts {"Key":key_arg, "Value":value_arg}
+        if False, `tags` is a dict of regular key-value pairs {key_arg1: value_arg1, key_arg2: value_arg2}
+    '''
+    assert isinstance(tags, (list,dict))
+    if not s3_format:
+        tags = gen_tagging_list_from_python_dict(tags)
+    bucket_tagger = boto3.resource("s3").BucketTagging(bucket_name)
+    
+    try:
+        existing_tags = bucket_tagger.tag_set
+        tags.extend(existing_tags)
+    except ClientError as err:
+        if err.response["Error"]["Code"] == "NoSuchTagSet":
+            pass
+    try:
+        set_tag = bucket_tagger.put(Tagging={"TagSet":tags})
+        # bucket_tagger.reload() #useless here
+        print("Bucket tags:", *tags, sep="\n\t")
+        return set_tag
+    except ClientError as err:
+        if err.response["Error"]["Code"] == "InvalidTag":
+            print("There may be a duplicate tag")
+            return None
+    
+def add_tags_to_object(bucket_name:str, object_name:str, tags:list[dict]|dict,
+                       s3_format=True, s3_client=None):
+    '''
+    Adds tags to an s3 bucket. Does not remove existing tags.
+
+    Will add an option to overwrite duplicate tags at some point.
+
+    Parameters:
+    `bucket_name` str
+        the name of the s3 bucket containing the object
+    `object_name` str
+        the name of the s3 object
+    `tags` list[dict]|dict
+        the tags to be added
+        See `s3_format` for more information
+    `s3_format` bool
+        if True, `tags` is a list S3 tag formatted dicts {"Key":key_arg, "Value":value_arg}
+        if False, `tags` is a dict of regular key-value pairs {key_arg1: value_arg1, key_arg2: value_arg2}
+    `s3_client` boto3.client("s3")
+        Gives the option to pass an s3 client if this function is used for many objects in a loop.
+        Saves time and space by not reinitializing a client every function call
+    '''
+    if s3_client == None: s3_client = boto3.client("s3")
+    if not s3_format:
+        tags = gen_tagging_list_from_python_dict(tags)
+
+    existing_tags = s3_client.get_object_tagging(Bucket = bucket_name, Key = object_name)["TagSet"]
+    tags.extend(existing_tags)
+    try:
+        set_tag = s3_client.put_object_tagging(
+            Bucket = bucket_name,
+            Key = object_name,
+            Tagging = {"TagSet" : tags}
+        )
+        print("New tag set:", *tags, sep="\n\t")
+        return set_tag
+    except ClientError as err:
+        if err.response["Error"]["Code"] == "InvalidTag":
+            print("There may be a duplicate tag")
+            return None
+
 def grant_logging_permissions_bucket_policy(logging_bucket_name: str,
                                             source_accounts: str|list[str]):
     '''
