@@ -4,15 +4,22 @@ from botocore.exceptions import ClientError
 import datetime
 import json
 from uuid import uuid4
+from inspect import isclass, isfunction
 
-def display_functions(name):
-    '''Displays the functions defined in the module `name`'''
+def display_callables(name):
+    '''Displays the functions and classes defined in the module `name`'''
     functions = []
     for name in dir(name):
         obj = eval(name)
-        if hasattr(obj, '__call__'):
+        if callable(obj): #hasattr(obj,'__call__'):
             if obj.__module__ == __name__:
                 functions.append(name)
+                if isclass(obj):
+                    methods = []
+                    for key,val in vars(obj).items():
+                        if isfunction(val) and key[:2] != "__":
+                            methods.append(key)
+                    functions.append(f'{name} methods: {methods}')
     return functions
 
 # generating things --------------------------
