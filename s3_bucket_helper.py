@@ -355,6 +355,48 @@ def add_tags_to_object(bucket_name:str, object_name:str, tags:list[dict]|dict,
             return None
 
 #setting/granting things like bucket server access logging ---------------
+def helper_lifecycle(**kwargs):
+    '''Makes the JSON formatted policy for the set_bucket_lifecycle()'''
+    config_json = {
+        "Rules": [{
+            "ID": kwargs.get("lifecycle_name"),
+            "Status": "Enabled"
+        }]}
+    
+    if kwargs.get("transition") and kwargs.get("transition_days"):
+        config_json["Rules"][0]["Transitions"] = [{
+            "Days": kwargs.get("transition_days"),
+            "StorageClass": kwargs.get("transition")
+        }]
+    
+    if kwargs.get("expiration") and kwargs.get("expiration_days"):
+        config_json["Rules"][0]["Expiration"] = {"Days": kwargs.get("expiration_days")}
+    
+    if kwargs.get("noncurrent_transition") and kwargs.get("noncurrent_transition_days"):
+        config_json["Rules"][0]["NoncurrentVersionTransitions"] = [{
+            "NoncurrentDays": kwargs.get("noncurrent_transition_days"),
+            "StorageClass": kwargs.get("noncurrent_transition")
+        }]
+
+    if kwargs.get("noncurrent_expiration") and kwargs.get("noncurrent_expiration_days"):
+        use_noncurrent = {"NoncurrentDays": kwargs.get("noncurrent_expiration_days")}
+        if kwargs.get("newer_noncurrent_versions"):
+            use_noncurrent["NewerNoncurrentVersions"] = kwargs.get("newer_noncurrent_versions")
+        config_json["Rules"][0]["NoncurrentVersionExpiration"] = use_noncurrent
+
+    if kwargs.get("filter"):
+        use_filter = {
+            "p" : {"Prefix": kwargs.get("prefix_filter")},
+            "t" : {"Tag": kwargs.get("tag_filter")},
+            "tt" : {"And": {"Tags": kwargs.get("tag_filter")}}, 
+            "pt" : {"And": {"Prefix": kwargs.get("prefix_filter"),
+                        "Tags": kwargs.get("tag_filter")}}}
+        config_json["Rules"][0]["Filter"] = use_filter[kwargs.get("filter")]
+    
+    config_json["Rules"][0]["AbortIncompleteMultipartUpload"] = {"DaysAfterInitiation": kwargs.get("abort_incomplete_days")}
+    
+    return config_json
+
 def set_bucket_lifecycle(
     lifecycle_name: str, 
     bucket_name: str,
@@ -366,24 +408,20 @@ def set_bucket_lifecycle(
     noncurrent_transition_days: int = None,
     noncurrent_expiration: bool = False,
     noncurrent_expiration_days: int = None,
+    newer_noncurrent_versions: int = None,
     prefix_filter: str = None,
     tag_filter: list[dict]|dict = None,
-    s3_format:bool = True
+    s3_format: bool = True,
+    abort_incomplete_days: int = 1,
+    expected_owner: str = None
     ):
     '''
-    Sets a data lifecycle management policy on a bucket in S3.
-    Good practice to have one rule per policy.
+    Sets a data lifecycle management configuration on a bucket in S3.
+    Good practice to have one rule per lifecycle configuration.
 
     https://docs.aws.amazon.com/AmazonS3/latest/userguide/intro-lifecycle-rules.html
-    Valid storage options to transition (can only move down):
-        - Standard
-        - RRS (might not be valid, Reduced Redundancy Storage, since it is the same as standard)
-        - Standard_IA
-        - S3 Intelligent_Tiering
-        - S3 One Zone_IA
-        - Glacier
-        - S3 Glacier Flexible Retrieval
-        - S3 Glacier Deep Archive
+    Valid storage options to transition:
+    'STANDARD_IA', 'INTELLIGENT_TIERING', 'ONEZONE_IA', 'GLACIER', 'GLACIER_IR', 'DEEP_ARCHIVE'
     
     Parameters:
     `lifecycle_name` str
@@ -416,8 +454,72 @@ def set_bucket_lifecycle(
     `s3_format` bool
         if True, `tag_filter` is a list S3 tag formatted dicts {"Key":key_arg, "Value":value_arg}
         if False, `tag_filter` is a dict of regular key-value pairs {key_arg1: value_arg1, key_arg2: value_arg2}
+    `abort_incomplete_days` int
+        Specifies the days since the initiation of an incomplete multipart upload that Amazon S3
+        will wait before permanently removing all parts of the upload.
+    `expected_owner` str
+        The account ID of the S3 bucket's expected owner. Unnecessary if you are the bucket owner.
+
+    Request syntax based on boto3 documentation:
+    https://boto3.amazonaws.com/v1/documentation/api/latest/reference/services/s3.html#bucketlifecycleconfiguration
     '''
-    pass
+    assert isinstance(lifecycle_name, (str,None))
+    assert isinstance(bucket_name, (str,None))
+    assert isinstance(transition, (str,None))
+    assert isinstance(transition_days, (int,None))
+    assert isinstance(expiration, (bool,None))
+    assert isinstance(expiration_days, (int,None))
+    assert isinstance(noncurrent_transition, (str,None))
+    assert isinstance(noncurrent_transition_days, (int,None))
+    assert isinstance(noncurrent_expiration, (bool,None))
+    assert isinstance(noncurrent_expiration_days, (int,None))
+    assert isinstance(newer_noncurrent_versions, (int,None))
+    if isinstance(newer_noncurrent_versions, int):
+        assert newer_noncurrent_versions <= 100 and newer_noncurrent_versions >= 0
+    assert isinstance(prefix_filter, (str,None))
+    assert isinstance(tag_filter, (list,dict,None))
+    assert isinstance(s3_format, (bool,None))
+    assert isinstance(abort_incomplete_days, int)
+    assert isinstance(expected_owner, (str,None))
+    
+    #setup for the helper function helper_lifecycle()
+    filter = "" #evaluates as False in a conditional.
+    if prefix_filter:
+        filter += "p"
+    if tag_filter:
+        filter += "t" * min( 2, len(tag_filter) )
+    filter = filter[: min( len(filter), 2 )]
+
+    #setting the lifecycle
+    config_json = helper_lifecycle(
+        lifecycle_name = lifecycle_name,
+        transition = transition,
+        transition_days = transition_days,
+        expiration = expiration,
+        expiration_days = expiration_days,
+        noncurrent_transition = noncurrent_transition,
+        noncurrent_transition_days = noncurrent_transition_days,
+        noncurrent_expiration = noncurrent_expiration,
+        noncurrent_expiration_days = noncurrent_expiration_days,
+        newer_noncurrent_versions = newer_noncurrent_versions,
+        prefix_filter = prefix_filter,
+        tag_filter = tag_filter,
+        filter = filter,
+        abort_incomplete_days = abort_incomplete_days
+    ) # this is the lifecycle configuration policy that will be added
+
+    bucket_lifecycle_tool = boto3.resource("s3").BucketLifecycleConfiguration(bucket_name)
+    if expected_owner:
+        response = bucket_lifecycle_tool.put(
+            LifecycleConfiguration = config_json,
+            ExpectedBucketOwner = expected_owner
+        )
+    else:
+        response = bucket_lifecycle_tool.put(
+            LifecycleConfiguration = config_json
+        )
+    print("Lifecycle Configuration:", config_json)
+    return response
 
 def grant_logging_permissions_bucket_policy(logging_bucket_name: str,
                                             source_accounts: str|list[str]):
@@ -475,7 +577,7 @@ def grant_logging_permissions_bucket_policy(logging_bucket_name: str,
             }
         ]
     }
-    policy = json.dumps(policy) #JSON dict to a string
+    policy = json.dumps(policy) #JSON dict to a string because BucketPolicy needs a string argument
 
     s3_policy_resource = boto3.resource("s3").BucketPolicy(logging_bucket_name)
     response = s3_policy_resource.put(
