@@ -275,7 +275,7 @@ def delete_objects__with_prefix(bucket_name: str, prefixes: str|list[str]):
     return response
 
 
-#setting/granting things like bucket server access logging ---------------
+#adding things to buckets/objects
 def add_tags_to_bucket(bucket_name:str, tags:list[dict]|dict, s3_format=True):
     '''
     Adds tags to an s3 bucket. Does not remove existing tags.
@@ -354,6 +354,71 @@ def add_tags_to_object(bucket_name:str, object_name:str, tags:list[dict]|dict,
             print("There may be a duplicate tag")
             return None
 
+#setting/granting things like bucket server access logging ---------------
+def set_bucket_lifecycle(
+    lifecycle_name: str, 
+    bucket_name: str,
+    transition: str = "Standard_IA",
+    transition_days: int = 30,
+    expiration: bool = True,
+    expiration_days: int = 90,
+    noncurrent_transition: str = None,
+    noncurrent_transition_days: int = None,
+    noncurrent_expiration: bool = False,
+    noncurrent_expiration_days: int = None,
+    prefix_filter: str = None,
+    tag_filter: list[dict]|dict = None,
+    s3_format:bool = True
+    ):
+    '''
+    Sets a data lifecycle management policy on a bucket in S3.
+    Good practice to have one rule per policy.
+
+    https://docs.aws.amazon.com/AmazonS3/latest/userguide/intro-lifecycle-rules.html
+    Valid storage options to transition (can only move down):
+        - Standard
+        - RRS (might not be valid, Reduced Redundancy Storage, since it is the same as standard)
+        - Standard_IA
+        - S3 Intelligent_Tiering
+        - S3 One Zone_IA
+        - Glacier
+        - S3 Glacier Flexible Retrieval
+        - S3 Glacier Deep Archive
+    
+    Parameters:
+    `lifecycle_name` str
+        The name that will be assigned to the lifecyclee policy.
+    `bucket_name` str
+        The name of the bucket to assign the policy unto.
+    `transition` str
+        The storage class to transition bucket objects to.
+    `transition_days` int
+        The days between object creation and object transition. 
+    `expiration` bool
+        True: adds a delete objects rule
+        False: does not add a delete objects rule
+    `expiration_days` int
+        The days between object creation and object expiration.
+    `noncurrent_transition` str
+        The storage class to transition bucket noncurrent objects to.
+        Only applicable to buckets with versionin enabled, will have no effect otherwise.
+    `noncurrent_transition_days` int
+        The days between object becoming noncurrent and object transition. 
+    `noncurrent_expiration` bool
+        True: adds a delete noncurrent objects rule
+        False: does not add a delete noncurrent objects rule
+    `noncurrent_expiration_days` int
+        The days between object becoming noncurrent and object expiration.
+    `prefix_filter` str
+        Policy will only affect objects with this prefix.
+    `tag_filter` list[dict]|dict
+        Policy will only affect objects with these tags.
+    `s3_format` bool
+        if True, `tag_filter` is a list S3 tag formatted dicts {"Key":key_arg, "Value":value_arg}
+        if False, `tag_filter` is a dict of regular key-value pairs {key_arg1: value_arg1, key_arg2: value_arg2}
+    '''
+    pass
+
 def grant_logging_permissions_bucket_policy(logging_bucket_name: str,
                                             source_accounts: str|list[str]):
     '''
@@ -366,12 +431,10 @@ def grant_logging_permissions_bucket_policy(logging_bucket_name: str,
     `logging_bucket_name` str
         the name of the bucket to receive the server access logging permissions
     `source_accounts` str|list[str]
-        the source accounts of the buckets' that are being logged (I think, I couldn't confirm this anywhere).
-        IF this is the case, it prevents random accounts from sending logs to your logging bucket.
+        The values of the strings will be the 12-digit AWS account ID on whose behalf the service is publishing data.
+        Can pass multiple source accounts as a list of 12-digit AWS ID strings.
         A list works by checking if the bucket source account is any of the values in `source_accounts`
         (case sensitive).
-        It might also be that the source account of the logging bucket must be one of the passed values;
-        either way the implementation is the same.
 
     The * wildcard will give logging permissions to all the paths in the logging_bucket_name.
     Can add this snippet inside Condition to specify allowed source bucket prefixes for the logging:
