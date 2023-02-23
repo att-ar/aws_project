@@ -6,7 +6,7 @@ def display_callables(module):
     print("----------")
     print(f"{module.__name__} classes:")
     for c in classes:
-        if c[1].__module__ == module.__name__ and c[0][:6] != "helper":
+        if c[1].__module__ == module.__name__ and c[0][:6] != "helper" and c[0][0] != "_":
             print(f"\t{c[0]} methods:", end="")
             methods = [m[0] for m in getmembers(c[1], isfunction)]
             print("", *methods, sep="\n\t\t")
