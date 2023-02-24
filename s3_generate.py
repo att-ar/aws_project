@@ -23,7 +23,7 @@ def gen_bucket_name(bucket_name: str) -> str:
             [bucket_name, hyphen[bucket_name[-1] == "-"], str(uuid4())]
         )[:min((len(bucket_name) + 36), 63)]
 
-def gen_bucket(bucket_name: str, tags: list[dict] = None, region = None, suffix = True):
+def gen_bucket(session, bucket_name: str, tags: list[dict] = None, region = None, suffix = True):
     '''
     Creates an S3 bucket and returns the suffixed bucket name as well as the S3 response
 
@@ -34,6 +34,9 @@ def gen_bucket(bucket_name: str, tags: list[dict] = None, region = None, suffix 
     This function uses the user that connected through the boto SDK to find its default region.
 
     Parameters:
+    `session` boto3.session.Session()
+    `bucket_name` str
+        The S3 bucket's name
     `tags` list[dict[str]]
         List of dictionaries containing the key-value pairs to be assigned as tags to the bucket.
         Each tag must be formatted in the s3 tag format: {'Key':key_argument, 'Value': value_argument}.
@@ -55,9 +58,9 @@ def gen_bucket(bucket_name: str, tags: list[dict] = None, region = None, suffix 
             The `bucket_name` argument is used as the S3 bucket name
             (this may throw an error since buckets need to be globally unique).
     '''
-    s3_boto_connection = boto3.resource("s3")
+    s3_boto_connection = session.resource("s3")
     if not region:
-        region = boto3.Session().region_name
+        region = session.region_name
     if suffix: bucket_name = gen_bucket_name(bucket_name)
     bucket_response = s3_boto_connection.create_bucket(
         Bucket = bucket_name,

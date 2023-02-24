@@ -15,11 +15,12 @@ def helper_tag_filter(tag_list:dict, source_tags:dict):
             result -= 1
     return not result
 
-def get_buckets_with_tags(tags: list[dict]|dict, s3_format = True) -> list[tuple[str]]:
+def get_buckets_with_tags(session, tags: list[dict]|dict, s3_format = True) -> list[tuple[str]]:
     '''
     Returns list of tuples containing buckets and their tags based on filtering by `tags`
 
     Parameters:
+    `session` boto3.session.Session()
     `tags` list[dict]|dict
         See `s3_format` for more information
     `s3_format` bool
@@ -29,7 +30,7 @@ def get_buckets_with_tags(tags: list[dict]|dict, s3_format = True) -> list[tuple
     assert isinstance(tags,(list,dict))
     if s3_format:
         tags = gen_python_dict_from_tagging_list(tags)
-    s3_client = boto3.client("s3")
+    s3_client = session.client("s3")
     result = []
     for bucket in s3_client.list_buckets()["Buckets"]:
         try:
@@ -41,12 +42,13 @@ def get_buckets_with_tags(tags: list[dict]|dict, s3_format = True) -> list[tuple
             else: print("Error: ", err.response)
     return result
 
-def get_objects_with_tags_from_bucket(bucket_name:str, tags:list[dict]|dict,
+def get_objects_with_tags_from_bucket(session, bucket_name:str, tags:list[dict]|dict,
                                       object_prefix:str = None, s3_format = True) -> list[tuple[str]]:
     '''
     Returns list of tuples containing `bucket_name`'s objects and their tags based on `tags` 
 
     Parameters:
+    `session` boto3.session.Session()
     `bucket_name` str
         the name of the bucket to check
     `tags` list[dict]|dict
@@ -58,7 +60,7 @@ def get_objects_with_tags_from_bucket(bucket_name:str, tags:list[dict]|dict,
         if True, `tags` is a list S3 tag formatted dicts {"Key":key_arg, "Value":value_arg}
         if False, `tags` is a dict of regular key-value pairs {key_arg1: value_arg1, key_arg2: value_arg2}
     '''
-    s3_client = boto3.client("s3")
+    s3_client = session.client("s3")
     result = []
     if s3_format:
         tags = gen_python_dict_from_tagging_list(tags)
@@ -94,14 +96,16 @@ def helper_date_comparison(bucket_creationdate: datetime.datetime, *args) -> boo
             return bucket_creationdate.date() == args[0].date()
             #will use the date portion for single comparison
 
-def get_buckets_with_name_date(prefix: str,
-                use_date: list[str|datetime.datetime|datetime.date]
-                    | str|datetime.datetime|datetime.date
-                    | None = None) -> list[str]:
+def get_buckets_with_name_date(session,
+                               prefix: str,
+                               use_date: list[str|datetime.datetime|datetime.date]
+                               | str|datetime.datetime|datetime.date
+                               | None = None) -> list[str]:
     '''
     Returns list of bucket names who start with `prefix` and made on or in (list) `use_date` using boto3.
 
     Parameters:
+    `session` boto3.session.Session()
     `prefix` str
         the first len(prefix) characters in bucket name must be `prefix` to work.
         If you want all buckets, to only filter with date, use `prefix` = ""
@@ -139,6 +143,6 @@ def get_buckets_with_name_date(prefix: str,
     #use_date is all datetime.datetime now
 
     return [bucket for bucket
-        in boto3.client("s3").list_buckets()["Buckets"]
+        in session.client("s3").list_buckets()["Buckets"]
         if (bucket["Name"][: min(len(bucket["Name"]), len(prefix))] == prefix)
             & (helper_date_comparison(bucket["CreationDate"], *use_date))]

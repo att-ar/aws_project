@@ -1,7 +1,7 @@
 import boto3
 
 # can use this to delete all objects if you pass "" as the prefix
-def delete_objects__with_prefix(bucket_name: str, prefix: str):
+def delete_objects__with_prefix(session, bucket_name: str, prefix: str):
     '''
     Delete objects from a bucket using `prefixes` as the filter for object names
 
@@ -9,6 +9,7 @@ def delete_objects__with_prefix(bucket_name: str, prefix: str):
     to get the object that remain after running this delete function
 
     Parameters:
+    `session` boto3.session.Session()
     `bucket_name` str
         the bucket name
     `prefix` str
@@ -18,7 +19,7 @@ def delete_objects__with_prefix(bucket_name: str, prefix: str):
     assert isinstance(prefix, str)
     
     response = []
-    bucket = boto3.resource("s3").Bucket(bucket_name)
+    bucket = session.resource("s3").Bucket(bucket_name)
 
     for obj in bucket.object_versions.all():
         try:

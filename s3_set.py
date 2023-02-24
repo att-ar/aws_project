@@ -3,10 +3,10 @@ from botocore.exceptions import ClientError
 import json
 
 from s3_generate import gen_tagging_list_from_python_dict#, gen_python_dict_from_tagging_list
-from s3_delete import delete_objects__with_prefix
+# from s3_delete import delete_objects__with_prefix
 
 #adding things to buckets/objects
-def add_tags_to_bucket(bucket_name:str, tags:list[dict]|dict, s3_format=True):
+def add_tags_to_bucket(session, bucket_name:str, tags:list[dict]|dict, s3_format=True):
     '''
     Adds tags to an s3 bucket. Does not remove existing tags.
 
@@ -14,6 +14,7 @@ def add_tags_to_bucket(bucket_name:str, tags:list[dict]|dict, s3_format=True):
     Will add an option to overwrite duplicate tags at some point.
 
     Parameters:
+    `session` boto3.session.Session()
     `bucket_name` str
         the name of the s3 bucket
     `tags` list[dict]|dict
@@ -26,7 +27,7 @@ def add_tags_to_bucket(bucket_name:str, tags:list[dict]|dict, s3_format=True):
     assert isinstance(tags, (list,dict))
     if not s3_format:
         tags = gen_tagging_list_from_python_dict(tags)
-    bucket_tagger = boto3.resource("s3").BucketTagging(bucket_name)
+    bucket_tagger = session.resource("s3").BucketTagging(bucket_name)
     
     try:
         existing_tags = bucket_tagger.tag_set
@@ -44,7 +45,7 @@ def add_tags_to_bucket(bucket_name:str, tags:list[dict]|dict, s3_format=True):
             print("There may be a duplicate tag")
             return None
     
-def add_tags_to_object(bucket_name:str, object_name:str, tags:list[dict]|dict,
+def add_tags_to_object(session, bucket_name:str, object_name:str, tags:list[dict]|dict,
                        s3_format=True, s3_client=None):
     '''
     Adds tags to an s3 bucket. Does not remove existing tags.
@@ -53,6 +54,7 @@ def add_tags_to_object(bucket_name:str, object_name:str, tags:list[dict]|dict,
     Will add an option to overwrite duplicate tags at some point.
 
     Parameters:
+    `session` boto3.session.Session()
     `bucket_name` str
         the name of the s3 bucket containing the object
     `object_name` str
@@ -67,7 +69,7 @@ def add_tags_to_object(bucket_name:str, object_name:str, tags:list[dict]|dict,
         Gives the option to pass an s3 client if this function is used for many objects in a loop.
         Saves time and space by not reinitializing a client every function call
     '''
-    if s3_client == None: s3_client = boto3.client("s3")
+    if s3_client == None: s3_client = session.client("s3")
     if not s3_format:
         tags = gen_tagging_list_from_python_dict(tags)
 
@@ -130,6 +132,7 @@ def helper_lifecycle(**kwargs):
     return config_json
 
 def add_bucket_lifecycle(
+    session,
     lifecycle_name: str, 
     bucket_name: str,
     transition: str = "Standard_IA",
@@ -158,6 +161,7 @@ def add_bucket_lifecycle(
     'STANDARD_IA', 'INTELLIGENT_TIERING', 'ONEZONE_IA', 'GLACIER', 'GLACIER_IR', 'DEEP_ARCHIVE'
     
     Parameters:
+    `session` boto3.session.Session()
     `lifecycle_name` str
         The name that will be assigned to the lifecyclee policy.
     `bucket_name` str
@@ -242,7 +246,7 @@ def add_bucket_lifecycle(
         abort_incomplete_days = abort_incomplete_days
     ) # this is the lifecycle configuration policy that will be added
 
-    bucket_lifecycle_tool = boto3.resource("s3").BucketLifecycleConfiguration(bucket_name)
+    bucket_lifecycle_tool = session.resource("s3").BucketLifecycleConfiguration(bucket_name)
     #check for existing lifecycle policies
     try:
         existing_policies = bucket_lifecycle_tool.rules
@@ -262,7 +266,7 @@ def add_bucket_lifecycle(
     print("Lifecycle Configuration:\n\t", config_json)
     return response
 
-def grant_logging_permissions_bucket_policy(logging_bucket_name: str, source_accounts: str|list[str]):
+def grant_logging_permissions_bucket_policy(session, logging_bucket_name: str, source_accounts: str|list[str]):
     '''
     Gives buckets a bucket policy that will allow it to be used for server access logging.
 
@@ -272,6 +276,7 @@ def grant_logging_permissions_bucket_policy(logging_bucket_name: str, source_acc
     https://docs.aws.amazon.com/AmazonS3/latest/userguide/enable-server-access-logging.html#grant-log-delivery-permissions-general
 
     Parameters:
+    `session` boto3.session.Session()
     `logging_bucket_name` str
         the name of the bucket to receive the server access logging permissions
     `source_accounts` str|list[str]
@@ -321,7 +326,7 @@ def grant_logging_permissions_bucket_policy(logging_bucket_name: str, source_acc
     }
     policy = json.dumps(policy) #JSON dict to a string because BucketPolicy needs a string argument
 
-    s3_policy_resource = boto3.resource("s3").BucketPolicy(logging_bucket_name)
+    s3_policy_resource = session.resource("s3").BucketPolicy(logging_bucket_name)
     response = s3_policy_resource.put(
         Policy = policy
     )
@@ -329,7 +334,8 @@ def grant_logging_permissions_bucket_policy(logging_bucket_name: str, source_acc
     print(f"Update Policy:\n{s3_policy_resource.policy}")
     return response
 
-def set_bucket_server_access_logging_on(source_bucket_name: str,
+def set_bucket_server_access_logging_on(session,
+                                        source_bucket_name: str,
                                         logging_bucket_name: str,
                                         logging_path_prefix: str|None = None):
     '''
@@ -338,7 +344,9 @@ def set_bucket_server_access_logging_on(source_bucket_name: str,
     Returns the logging response.
 
     Parameters:
-    self explanatory, read the names.
+    `session` boto3.session.Session()
+    `source_bucket_name` str
+    `logging_bucket_name` str
     `logging_path_prefix` str
         use this to separate different source buckets inside the logging bucket
         if `logging_path_prefix` = None, it will default to the `source_bucket_name` argument
@@ -358,7 +366,7 @@ def set_bucket_server_access_logging_on(source_bucket_name: str,
         if logging_path_prefix[-1] != "/": logging_path_prefix += "/"
     else: logging_path_prefix = source_bucket_name[:] + "/" #makes a copy to avoid referencing each other
 
-    bucket_logging_settings = boto3.resource("s3").BucketLogging(source_bucket_name)
+    bucket_logging_settings = session.resource("s3").BucketLogging(source_bucket_name)
     response = bucket_logging_settings.put(
         BucketLoggingStatus = {
             "LoggingEnabled": {
@@ -371,7 +379,7 @@ def set_bucket_server_access_logging_on(source_bucket_name: str,
     print("Logging settings:", bucket_logging_settings.logging_enabled, sep="\n")
     return response
 
-def set_bucket_server_access_logging_off(source_bucket_name: str):#, delete_logs: bool = False):
+def set_bucket_server_access_logging_off(session, source_bucket_name: str):#, delete_logs: bool = False):
     '''
     Turns off logging for `source_bucket_name`
 
@@ -380,16 +388,18 @@ def set_bucket_server_access_logging_off(source_bucket_name: str):#, delete_logs
     Copy the function and uncomment the code to use it in another environment.
 
     Parameters:
-    self-explanatory, read the names.
+    `session` boto3.session.Session()
+    `source_bucket_name` str
     '''
-    resource = boto3.resource("s3").BucketLogging(source_bucket_name)
+    resource = session.resource("s3").BucketLogging(source_bucket_name)
     response = resource.put(BucketLoggingStatus = {}) #empty BLS turns off logging
     # if delete_logs:
     #     try:
     #         #the following should work because the resource was not reloaded
     #         logging_status = resource.logging_enabled
     #         #format of resource.logging_enabled is {'TargetBucket': logging_bucket, 'TargetPrefix': logging_prefix}
-    #         del_response = delete_objects__with_prefix(logging_status["TargetBucket"],
+    #         del_response = delete_objects__with_prefix(session,
+    #                                                    logging_status["TargetBucket"],
     #                                                    logging_status["TargetPrefix"])
     #         return response, del_response
     #     except TypeError:
