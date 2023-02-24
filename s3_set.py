@@ -371,25 +371,27 @@ def set_bucket_server_access_logging_on(source_bucket_name: str,
     print("Logging settings:", bucket_logging_settings.logging_enabled, sep="\n")
     return response
 
-def set_bucket_server_access_logging_off(source_bucket_name: str, delete_logs: bool = False):
+def set_bucket_server_access_logging_off(source_bucket_name: str):#, delete_logs: bool = False):
     '''
-    Turns off logging for `source_bucket_name`, can also delete all of its logs.
+    Turns off logging for `source_bucket_name`
 
-    Returns the logging response, and the deleting response if a deletion was executed.
+    Returns the logging response.
+    The deletion option was removed due to security reasons.
+    Copy the function and uncomment the code to use it in another environment.
 
     Parameters:
     self-explanatory, read the names.
     '''
     resource = boto3.resource("s3").BucketLogging(source_bucket_name)
     response = resource.put(BucketLoggingStatus = {}) #empty BLS turns off logging
-    if delete_logs:
-        try:
-            #the following should work because the resource was not reloaded
-            logging_status = resource.logging_enabled
-            #format of resource.logging_enabled is {'TargetBucket': logging_bucket, 'TargetPrefix': logging_prefix}
-            del_response = delete_objects__with_prefix(logging_status["TargetBucket"],
-                                                       logging_status["TargetPrefix"])
-            return response, del_response
-        except TypeError:
-            print(f"No logs found for source bucket {source_bucket_name}.")
+    # if delete_logs:
+    #     try:
+    #         #the following should work because the resource was not reloaded
+    #         logging_status = resource.logging_enabled
+    #         #format of resource.logging_enabled is {'TargetBucket': logging_bucket, 'TargetPrefix': logging_prefix}
+    #         del_response = delete_objects__with_prefix(logging_status["TargetBucket"],
+    #                                                    logging_status["TargetPrefix"])
+    #         return response, del_response
+    #     except TypeError:
+    #         print(f"No logs found for source bucket {source_bucket_name}.")
     return response
