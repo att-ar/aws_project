@@ -23,7 +23,7 @@ def gen_bucket_name(bucket_name: str) -> str:
             [bucket_name, hyphen[bucket_name[-1] == "-"], str(uuid4())]
         )[:min((len(bucket_name) + 36), 63)]
 
-def gen_bucket(bucket_name: str, tags: dict = None, region = None, suffix = True):
+def gen_bucket(bucket_name: str, tags: list[dict] = None, region = None, suffix = True):
     '''
     Creates an S3 bucket and returns the suffixed bucket name as well as the S3 response
 
