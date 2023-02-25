@@ -1,4 +1,3 @@
-import boto3
 from botocore.exceptions import ClientError
 import json
 
@@ -6,7 +5,7 @@ from s3_generate import gen_tagging_list_from_python_dict#, gen_python_dict_from
 # from s3_delete import delete_objects__with_prefix
 
 #adding things to buckets/objects
-def add_tags_to_bucket(session, bucket_name:str, tags:list[dict]|dict, s3_format=True):
+def add_tags_to_bucket(session, bucket_name:str, tags:list[dict]|dict, s3_format=True, overwrite=False):
     '''
     Adds tags to an s3 bucket. Does not remove existing tags.
 
@@ -23,18 +22,22 @@ def add_tags_to_bucket(session, bucket_name:str, tags:list[dict]|dict, s3_format
     `s3_format` bool
         if True, `tags` is a list S3 tag formatted dicts {"Key":key_arg, "Value":value_arg}
         if False, `tags` is a dict of regular key-value pairs {key_arg1: value_arg1, key_arg2: value_arg2}
+    `overwrite` bool
+        if True, existing tags are overwritten.
+        if False, existing tags are added to.
     '''
     assert isinstance(tags, (list,dict))
     if not s3_format:
         tags = gen_tagging_list_from_python_dict(tags)
     bucket_tagger = session.resource("s3").BucketTagging(bucket_name)
     
-    try:
-        existing_tags = bucket_tagger.tag_set
-        tags.extend(existing_tags)
-    except ClientError as err:
-        if err.response["Error"]["Code"] == "NoSuchTagSet":
-            pass
+    if not overwrite:
+        try:
+            existing_tags = bucket_tagger.tag_set
+            tags.extend(existing_tags)
+        except ClientError as err:
+            if err.response["Error"]["Code"] == "NoSuchTagSet":
+                pass
     try:
         set_tag = bucket_tagger.put(Tagging={"TagSet":tags})
         # bucket_tagger.reload() #useless here
@@ -46,7 +49,7 @@ def add_tags_to_bucket(session, bucket_name:str, tags:list[dict]|dict, s3_format
             return None
     
 def add_tags_to_object(session, bucket_name:str, object_name:str, tags:list[dict]|dict,
-                       s3_format=True, s3_client=None):
+                       s3_format=True, s3_client=None, overwrite=False):
     '''
     Adds tags to an s3 bucket. Does not remove existing tags.
 
@@ -68,13 +71,16 @@ def add_tags_to_object(session, bucket_name:str, object_name:str, tags:list[dict
     `s3_client` boto3.client("s3")
         Gives the option to pass an s3 client if this function is used for many objects in a loop.
         Saves time and space by not reinitializing a client every function call
+    `overwrite` bool
+        if True, existing tags are overwritten.
+        if False, existing tags are added to.
     '''
     if s3_client == None: s3_client = session.client("s3")
     if not s3_format:
         tags = gen_tagging_list_from_python_dict(tags)
-
-    existing_tags = s3_client.get_object_tagging(Bucket = bucket_name, Key = object_name)["TagSet"]
-    tags.extend(existing_tags)
+    if not overwrite:
+        existing_tags = s3_client.get_object_tagging(Bucket = bucket_name, Key = object_name)["TagSet"]
+        tags.extend(existing_tags)
     try:
         set_tag = s3_client.put_object_tagging(
             Bucket = bucket_name,
@@ -87,7 +93,6 @@ def add_tags_to_object(session, bucket_name:str, object_name:str, tags:list[dict
         if err.response["Error"]["Code"] == "InvalidTag":
             print("There may be a duplicate tag")
             return None
-
 #setting/granting things like bucket server access logging ---------------
 def helper_lifecycle(**kwargs):
     '''Makes the JSON formatted policy for the set_bucket_lifecycle()'''
