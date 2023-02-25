@@ -79,8 +79,33 @@ def get_objects_with_tags_from_bucket(session, bucket_name:str, tags:list[dict]|
 
 
 ## name date filter
+def helper_date_conversion(use_date):
+    '''helper for name_date filters, converts use_date to datetime.datetime'''
+    if isinstance(use_date, str):
+        try:
+            use_date = [int(i) for i in use_date.split("-")]
+            use_date = [datetime.datetime(*use_date)]
+        except Exception:
+            return f"Incorrect string input for `use_date` = {use_date}"
+    elif isinstance(use_date, datetime.date):
+        use_date = [datetime.datetime.combine(use_date, datetime.time(0))]
+
+    elif isinstance(use_date, list):
+        assert len(use_date) == 2, "Date interval can only have two dates."
+        for i,d in enumerate(use_date):
+            if isinstance(d,str):
+                try:
+                    d = [int(num) for num in d.split("-")]
+                    use_date[i] = datetime.datetime(*d)
+                except Exception:
+                    return f"Incorrect string input for `use_date[{i}]` = {d}"
+            elif isinstance(d, datetime.date):
+                use_date[i] = datetime.datetime.combine(d, datetime.time(0))
+    #use_date is all datetime.datetime now
+    return use_date
+
 def helper_date_comparison(bucket_creationdate: datetime.datetime, *args) -> bool:
-    '''helper for get_buckets_with_name_date, returns the date comparison result'''
+    '''helper for name_date filters, returns the date comparison result'''
     timezone = bucket_creationdate.tzinfo
     args = list(args) #args is a tuple but a mutable object is needed
     for i in range(len(args)):
@@ -120,29 +145,45 @@ def get_buckets_with_name_date(session,
     '''
     assert isinstance(use_date, (str, list, datetime.date, datetime.datetime)), f"Invalid type(use_date) = {type(use_date)}"
     # turning use_date into datetime.datetime
-    if isinstance(use_date, str):
-        try:
-            use_date = [int(i) for i in use_date.split("-")]
-            use_date = [datetime.datetime(*use_date)]
-        except Exception:
-            return f"Incorrect string input for `use_date` = {use_date}"
-    elif isinstance(use_date, datetime.date):
-        use_date = [datetime.datetime.combine(use_date, datetime.time(0))]
-
-    elif isinstance(use_date, list):
-        assert len(use_date) == 2, "Date interval can only have two dates."
-        for i,d in enumerate(use_date):
-            if isinstance(d,str):
-                try:
-                    d = [int(num) for num in d.split("-")]
-                    use_date[i] = datetime.datetime(*d)
-                except Exception:
-                    return f"Incorrect string input for `use_date[{i}]` = {d}"
-            elif isinstance(d, datetime.date):
-                use_date[i] = datetime.datetime.combine(d, datetime.time(0))
-    #use_date is all datetime.datetime now
-
+    use_date = helper_date_conversion(use_date)
+    bucket_list = session.client("s3").list_buckets()["Buckets"]
+    #removed from list comprehension to separate boto3 interacting with a loop
     return [bucket for bucket
-        in session.client("s3").list_buckets()["Buckets"]
+        in bucket_list
         if (bucket["Name"][: min(len(bucket["Name"]), len(prefix))] == prefix)
             & (helper_date_comparison(bucket["CreationDate"], *use_date))]
+
+def get_objects_with_name_date(session,
+                               bucket_name: str,
+                               object_prefix: str,
+                               use_date: list[str|datetime.datetime|datetime.date]
+                               | str|datetime.datetime|datetime.date
+                               | None = None) -> list[str]:
+    '''
+    Returns list of bucket names who start with `prefix` and made on or in (list) `use_date` using boto3.
+
+    Parameters:
+    `session` boto3.session.Session()
+    `bucket_name` str
+        The name of the bucket to be checked.
+    `object_prefix` str
+        the first len(prefix) characters in an object name must be `prefix` to work.
+        use `prefix` = "" to not filter by name
+    `use_date` list[str|datetime.datetime|datetime.date] or str|datetime.datetime|datetime.date
+        defaults to None if only the name is needed as a search.
+        Used to retrieve the buckets made on the date given.
+        if str, must be in the format "year-month-day-hour-minute-second".
+            only year, month, and day are required.
+        If you want to check an interval of dates, use a for loop with an f-string for `use_date`.
+
+    Doesn't throw an indexing error if the prefix is longer than the bucket name.
+    '''
+    assert isinstance(use_date, (str, list, datetime.date, datetime.datetime)), f"Invalid type(use_date) = {type(use_date)}"
+    # turning use_date into datetime.datetime
+    use_date = helper_date_conversion(use_date)
+    object_list = session.client("s3").list_objects(Bucket = bucket_name,
+                                                    Prefix = object_prefix)["Contents"]
+    #removed from list comprehension to separate boto3 interacting with a loop
+    return [obj for obj
+        in object_list
+        if helper_date_comparison(obj["LastModified"], *use_date)]

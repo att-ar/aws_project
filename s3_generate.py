@@ -1,5 +1,5 @@
-import boto3
 from uuid import uuid4
+from urllib import parse
 
 def gen_tagging_list_from_python_dict(tags:dict):
     '''Converts a dict of key-value pairs to a list of s3 tagging dicts'''
@@ -31,7 +31,7 @@ def gen_bucket(session, bucket_name: str, tags: list[dict] = None, region = None
         `bucket_name` must contain characters valid in S3
         Each tag in `tags` must be in s3 tag format: {'Key':key_argument, 'Value':value_argument}
 
-    This function uses the user that connected through the boto SDK to find its default region.
+    This function uses `session` to find its default region.
 
     Parameters:
     `session` boto3.session.Session()
@@ -75,5 +75,55 @@ def gen_bucket(session, bucket_name: str, tags: list[dict] = None, region = None
         set_tag = bucket_tagger.put(Tagging={"TagSet":tags})
         # bucket_tagger.reload() #useless here since it isn't called again
         print(f"Bucket tags: {tags}")
+        return bucket_name, bucket_response, set_tag
+    return bucket_name, bucket_response
 
-    return bucket_name, bucket_response, set_tag
+    
+
+def gen_object(session, bucket_name:str, object_path:str,
+               tags: dict = None, storage_class = "STANDARD"):
+    '''
+    Creates an S3 object in a bucket
+    
+    Returns the object path inside its bucket, the S3 response, and the tags that were set.
+
+    Precondition:
+        `bucket_name` and `object_name` must contain characters valid in S3
+        Each tag in `tags` must be in s3 tag format: {'Key':key_argument, 'Value':value_argument}
+
+    This function uses `session` to find its default region.
+    Note: the boto3 implementation for uploading a file to an object is very straightforward
+    so no additional abstraction via functions is needed.
+
+    Parameters:
+    `session` boto3.session.Session()
+    `bucket_name` str
+        The S3 bucket's name
+    `object_path` str
+        The path inside the bucket to be used as the object key.
+        Forward slashes are used as 1 dimensional "folder-like" separations.
+    `tags` dict
+        Must be a regular python dictionary such as {key_arg1:val_arg1, key_arg2:val_arg2}.
+        This is converted to url encoding inside the function. So S3 formatted list[dict] will not work.
+    `storage_class` str
+        One of 'STANDARD'|'REDUCED_REDUNDANCY'|'STANDARD_IA'|'ONEZONE_IA'|
+        'INTELLIGENT_TIERING'|'GLACIER'|'DEEP_ARCHIVE'|'OUTPOSTS'|'GLACIER_IR'
+    '''
+    valid_storage = ['STANDARD', 'REDUCED_REDUNDANCY', 'STANDARD_IA', 'ONEZONE_IA', 
+        'INTELLIGENT_TIERING', 'GLACIER', 'DEEP_ARCHIVE', 'OUTPOSTS', 'GLACIER_IR']
+    assert storage_class in valid_storage, f"incorrect storage_class input = {storage_class}"
+
+    s3_obj = session.resource("s3").Object(bucket_name, object_path)
+    if tags:
+        url_tags = parse.urlencode(tags)
+        response = s3_obj.put(
+            ACL = "private",
+            StorageClass = storage_class,
+            Tagging = url_tags)
+        return object_path, response, gen_tagging_list_from_python_dict(tags)
+    else:
+        response = s3_obj.put(
+            ACL = "private",
+            StorageClass = storage_class)
+        
+    return object_path, response
